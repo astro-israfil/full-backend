@@ -88,4 +88,116 @@ const registerUser = asyncHandler(async function (req, res) {
   );
 });
 
-export { registerUser };
+const loginUser = asyncHandler(async function (req, res) {
+  // get users credentials from frontend
+  // check if email, username, and password is present or not
+  // find user with email, or username
+  // check password is correct
+  // generate access and refresh token
+  // send cookie
+
+  const { username, email, password } = req.body;
+
+  if (!username && !email) {
+    throw new ApiError(400, "username or email is required");
+  }
+  if (!password) {
+    throw new ApiError(400, "Password is required");
+  }
+
+  const user = await User.findOne({
+    $or: [{ email }, { password }],
+  });
+
+  if (!user) {
+    throw new ApiError(404, "User does not exist");
+  }
+
+  const isPasswordValid = await user.isPasswordCorrect(password);
+
+  if (!isPasswordValid) {
+    throw new ApiError(401, "Invalid credentials");
+  }
+
+  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
+    user._id
+  );
+
+  const loggedInUser = await User.findById(user._id).select(
+    "-password -refreshToken"
+  );
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, cookieOptions)
+    .cookie("refreshToken", refreshToken, cookieOptions)
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: loggedInUser,
+          accessToken,
+          refreshToken,
+        },
+        "success"
+      )
+    );
+});
+
+const logoutUser = asyncHandler(async function (req, res) {
+  if (!req.user) {
+    throw new ApiError(401, "Aunthentication failed");
+  }
+
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: "",
+      },
+    },
+    {
+      new: true,
+    }
+  );
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  return res
+    .status(200)
+    .clearCookie("accessToken", cookieOptions)
+    .clearCookie("refreshToken", cookieOptions);
+});
+
+async function generateAccessAndRefreshTokens(userId) {
+  try {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new ApiError(500, "Something went wrong while searching user");
+    }
+
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new ApiError(
+      500,
+      "Something went worng while generating access and refresh tokens"
+    );
+  }
+}
+
+export { registerUser, loginUser, logoutUser };
